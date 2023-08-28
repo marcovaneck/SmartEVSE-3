@@ -25,6 +25,8 @@
 #ifndef __EVSE_MODBUS
 #define __EVSE_MODBUS
 
+#include <ModbusClient.h>
+
 struct ModBus {
     uint8_t Address;
     uint8_t Function;
@@ -40,28 +42,23 @@ struct ModBus {
     uint8_t Exception;
 };
 
-// definition of MBserver / MBclient class is done in evse.cpp
-extern ModbusServerRTU MBserver;
-extern ModbusClientRTU MBclient; 
-
-void RS485SendBuf(uint8_t *buffer, uint8_t len);
-uint8_t mapModbusRegister2ItemID();
+uint8_t mapModbusRegister2ItemID(uint16_t Register, uint16_t RegisterCount);
 
 // ########################### Modbus main functions ###########################
 
-void ModbusReadInputRequest(uint8_t address, uint8_t function, uint16_t reg, uint16_t quantity);
+void ModbusReadInputRequest(ModbusClient *client, uint8_t address, uint8_t function, uint16_t reg, uint16_t quantity);
 void ModbusReadInputResponse(uint8_t address, uint8_t function, uint16_t *values, uint8_t count);
-void ModbusWriteSingleRequest(uint8_t address, uint16_t reg, uint16_t value);
-void ModbusWriteMultipleRequest(uint8_t address, uint16_t reg, uint16_t *values, uint8_t count);
+void ModbusWriteSingleRequest(ModbusClient *client, uint8_t address, uint16_t reg, uint16_t value);
+void ModbusWriteMultipleRequest(ModbusClient *client, uint8_t address, uint16_t reg, uint16_t *values, uint8_t count);
 void ModbusException(uint8_t address, uint8_t function, uint8_t exception);
-void ModbusDecode(uint8_t *buf, uint8_t len);
+void ModbusDecode(ModBus * MD, uint8_t *buf, uint8_t len);
 
 // ########################### EVSE modbus functions ###########################
 
-signed int receiveMeasurement(uint8_t *buf, uint8_t pos, uint8_t Endianness, MBDataType dataType, signed char Divisor);
-void requestMeasurement(uint8_t Meter, uint8_t Address, uint16_t Register, uint8_t Count);
-void requestCurrentMeasurement(uint8_t Meter, uint8_t Address);
-uint8_t receiveCurrentMeasurement(uint8_t *buf, uint8_t Meter, signed int *var);
+signed int receiveMeasurement(ModbusClient *client, uint8_t *buf, uint8_t pos, uint8_t Endianness, MBDataType dataType, signed char Divisor);
+void requestMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address, uint16_t Register, uint8_t Count);
+void requestCurrentMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address);
+uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Meter, signed int *var);
 
 //void ReadItemValueResponse(void);
 //void WriteItemValueResponse(void);
