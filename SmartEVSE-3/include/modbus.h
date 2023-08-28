@@ -42,23 +42,28 @@ struct ModBus {
     uint8_t Exception;
 };
 
+struct MBClientContainer {
+    ModbusClient *Client;
+    ModBus MB;
+};
+
 uint8_t mapModbusRegister2ItemID(uint16_t Register, uint16_t RegisterCount);
 
 // ########################### Modbus main functions ###########################
 
-void ModbusReadInputRequest(ModbusClient *client, uint8_t address, uint8_t function, uint16_t reg, uint16_t quantity);
+void ModbusReadInputRequest(MBClientContainer *cl, uint8_t address, uint8_t function, uint16_t reg, uint16_t quantity);
 void ModbusReadInputResponse(uint8_t address, uint8_t function, uint16_t *values, uint8_t count);
-void ModbusWriteSingleRequest(ModbusClient *client, uint8_t address, uint16_t reg, uint16_t value);
-void ModbusWriteMultipleRequest(ModbusClient *client, uint8_t address, uint16_t reg, uint16_t *values, uint8_t count);
+void ModbusWriteSingleRequest(MBClientContainer *cl, uint8_t address, uint16_t reg, uint16_t value);
+void ModbusWriteMultipleRequest(MBClientContainer *cl, uint8_t address, uint16_t reg, uint16_t *values, uint8_t count);
 void ModbusException(uint8_t address, uint8_t function, uint8_t exception);
-void ModbusDecode(ModBus * MD, uint8_t *buf, uint8_t len);
+ModBus * ModbusDecode(MBClientContainer *cl, ModbusMessage request);
 
 // ########################### EVSE modbus functions ###########################
 
-signed int receiveMeasurement(ModbusClient *client, uint8_t *buf, uint8_t pos, uint8_t Endianness, MBDataType dataType, signed char Divisor);
-void requestMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address, uint16_t Register, uint8_t Count);
-void requestCurrentMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address);
-uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Meter, signed int *var);
+signed int receiveMeasurement(uint8_t *buf, uint8_t pos, uint8_t Endianness, MBDataType dataType, signed char Divisor);
+void requestMeasurement(MBClientContainer *cl, uint8_t Meter, uint8_t Address, uint16_t Register, uint8_t Count);
+void requestCurrentMeasurement(MBClientContainer *cl, uint8_t Meter, uint8_t Address);
+uint8_t receiveCurrentMeasurement(MBClientContainer *cl, uint8_t Meter, signed int *var);
 
 //void ReadItemValueResponse(void);
 //void WriteItemValueResponse(void);

@@ -89,7 +89,12 @@ String Router_Pass;
 
 // Create a ModbusRTU server, client and bridge instance on Serial1
 ModbusServerRTU MBserver(2000, PIN_RS485_DIR);     // TCP timeout set to 2000 ms
-ModbusClientRTU MBclientRTU(PIN_RS485_DIR);
+ModbusClientRTU MBclientRTUInt(PIN_RS485_DIR);
+MBClientContainer MBclientRTU = {
+    &MBclientRTUInt,
+    {}
+};
+
 ModbusBridgeWiFi MBbridge;
 
 hw_timer_t * timerA = NULL;
@@ -2037,7 +2042,7 @@ void EVSEStates(void * parameter) {
  * @param uint8_t Address
  * @param bool    Export (if exported energy is requested)
  */
-void requestEnergyMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address, bool Export) {
+void requestEnergyMeasurement(MBClientContainer *client, uint8_t Meter, uint8_t Address, bool Export) {
    switch (Meter) {
         case EM_SOLAREDGE:
             // Note:
@@ -2893,20 +2898,20 @@ void Timer1S(void * parameter) {
  * @param uint8_t Meter
  * @return signed int Energy (Wh)
  */
-signed int receiveEnergyMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Meter) {
+signed int receiveEnergyMeasurement(MBClientContainer *client, uint8_t *buf, uint8_t Meter) {
     switch (Meter) {
         case EM_ABB:
             // Note:
             // - ABB uses 32-bit values, except for this measurement it uses 64bit unsigned int format
             // We skip the first 4 bytes (effectivaly creating uint 32). Will work as long as the value does not exeed  roughly 20 million
-            return receiveMeasurement(client, buf, 1, EMConfig[Meter].Endianness, MB_DATATYPE_INT32, EMConfig[Meter].EDivisor-3);
+            return receiveMeasurement(buf, 1, EMConfig[Meter].Endianness, MB_DATATYPE_INT32, EMConfig[Meter].EDivisor-3);
         case EM_SOLAREDGE:
             // Note:
             // - SolarEdge uses 16-bit values, except for this measurement it uses 32bit int format
             // - EM_SOLAREDGE should not be used for EV Energy Measurements
-            return receiveMeasurement(client, buf, 0, EMConfig[Meter].Endianness, MB_DATATYPE_INT32, EMConfig[Meter].EDivisor - 3);
+            return receiveMeasurement(buf, 0, EMConfig[Meter].Endianness, MB_DATATYPE_INT32, EMConfig[Meter].EDivisor - 3);
         default:
-            return receiveMeasurement(client, buf, 0, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].EDivisor - 3);
+            return receiveMeasurement(buf, 0, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].EDivisor - 3);
     }
 }
 
@@ -2918,7 +2923,7 @@ signed int receiveEnergyMeasurement(ModbusClient *client, uint8_t *buf, uint8_t 
  * @param uint8_t Meter
  * @return signed int Power (W)
   */
-signed int receivePowerMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Meter) {
+signed int receivePowerMeasurement(MBClientContainer *client, uint8_t Meter) {
     switch (Meter) {
         case EM_SOLAREDGE:
         {
@@ -2926,17 +2931,16 @@ signed int receivePowerMeasurement(ModbusClient *client, uint8_t *buf, uint8_t M
             // - SolarEdge uses 16-bit values, with a extra 16-bit scaling factor
             // - EM_SOLAREDGE should not be used for EV power measurements, only PV power measurements are supported
             int scalingFactor = -(int)receiveMeasurement(
-                        client,
-                        buf,
+                        client->MB.Data,
                         1,
                         EMConfig[Meter].Endianness,
                         EMConfig[Meter].DataType,
                         0
             );
-            return receiveMeasurement(client, buf, 0, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, scalingFactor);
+            return receiveMeasurement(client->MB.Data, 0, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, scalingFactor);
         }
         default:
-            return receiveMeasurement(client, buf, 0, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor);
+            return receiveMeasurement(client->MB.Data, 0, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor);
     }
 }
 
@@ -2944,21 +2948,21 @@ signed int receivePowerMeasurement(ModbusClient *client, uint8_t *buf, uint8_t M
 // Modbus functions
 
 // stores energy responses; returns 0 if it stored a value, returns 1 if the response didnt match
-int StoreEnergyResponse(ModbusClient *client, ModBus *MB, uint8_t Meter, int32_t& Import, int32_t& Export ) {
-    if (MB->Register == EMConfig[Meter].ERegister) {
+int StoreEnergyResponse(MBClientContainer *client, uint8_t Meter, int32_t& Import, int32_t& Export ) {
+    if (client->MB.Register == EMConfig[Meter].ERegister) {
         //import active energy
         if (Meter == EM_EASTRON3P_INV)
-            Export = receiveEnergyMeasurement(client, MB->Data, Meter);
+            Export = receiveEnergyMeasurement(client, client->MB.Data, Meter);
         else
-            Import = receiveEnergyMeasurement(client, MB->Data, Meter);
+            Import = receiveEnergyMeasurement(client, client->MB.Data, Meter);
         return 0;
     }
-    else if (MB->Register == EMConfig[Meter].ERegister_Exp) {
+    else if (client->MB.Register == EMConfig[Meter].ERegister_Exp) {
         //export active energy
         if (Meter == EM_EASTRON3P_INV)
-            Import = receiveEnergyMeasurement(client, MB->Data, Meter);
+            Import = receiveEnergyMeasurement(client, client->MB.Data, Meter);
         else
-            Export = receiveEnergyMeasurement(client, MB->Data, Meter);
+            Export = receiveEnergyMeasurement(client, client->MB.Data, Meter);
         return 0;
     }
     return 1;
@@ -2967,30 +2971,29 @@ int StoreEnergyResponse(ModbusClient *client, ModBus *MB, uint8_t Meter, int32_t
 // Monitor EV Meter responses, and update Enery and Power and Current measurements
 // Does not send any data back.
 //
-ModbusMessage MBEVMeterResponse(ModbusClient *client, ModbusMessage request) {
+ModbusMessage MBEVMeterResponse(MBClientContainer *client, ModbusMessage request) {
     
     uint8_t x;
     int32_t EV[3]={0, 0, 0};
 
-    ModBus MB;
-    ModbusDecode(&MB, (uint8_t*)request.data(), request.size());
+    ModBus *MB = ModbusDecode(client, request);
 
-    if (MB.Type == MODBUS_RESPONSE) {
+    if (MB->Type == MODBUS_RESPONSE) {
        // _LOG_A("EVMeter Response\n");
         // Packet from EV electric meter
-        if (!StoreEnergyResponse(client, &MB, EVMeter, EV_import_active_energy, EV_export_active_energy)) {
+        if (!StoreEnergyResponse(client, EVMeter, EV_import_active_energy, EV_export_active_energy)) {
             // Energy measurement
             EnergyEV = EV_import_active_energy - EV_export_active_energy;
             if (ResetKwh == 2) EnergyMeterStart = EnergyEV;                 // At powerup, set EnergyEV to kwh meter value
             EnergyCharged = EnergyEV - EnergyMeterStart;                    // Calculate Energy
             if (Modem)
                 RecomputeSoC();
-        } else if (MB.Register == EMConfig[EVMeter].PRegister) {
+        } else if (client->MB.Register == EMConfig[EVMeter].PRegister) {
             // Power measurement
-            PowerMeasured = receivePowerMeasurement(client, MB.Data, EVMeter);
-        } else if (MB.Register == EMConfig[EVMeter].IRegister) {
+            PowerMeasured = receivePowerMeasurement(client, EVMeter);
+        } else if (client->MB.Register == EMConfig[EVMeter].IRegister) {
             // Current measurement
-            x = receiveCurrentMeasurement(client, MB.Data, EVMeter, EV );
+            x = receiveCurrentMeasurement(client, EVMeter, EV );
             if (x && LoadBl <2) timeout = 10;                   // only reset timeout when data is ok, and Master/Disabled
             for (x = 0; x < 3; x++) {
                 // CurrentMeter and PV values are MILLI AMPERE
@@ -3010,15 +3013,14 @@ ModbusMessage MBEVMeterResponseRTU(ModbusMessage request) {
 // Monitor PV Meter responses, and update PV current measurements
 // Does not send any data back.
 //
-ModbusMessage MBPVMeterResponse(ModbusClient *client, ModbusMessage request) {
-    ModBus MB;
-    ModbusDecode(&MB, (uint8_t*)request.data(), request.size());
+ModbusMessage MBPVMeterResponse(MBClientContainer *client, ModbusMessage request) {
+    ModBus *MB = ModbusDecode(client, request);
 
-    if (MB.Type == MODBUS_RESPONSE) {
+    if (MB->Type == MODBUS_RESPONSE) {
 //        _LOG_A("PVMeter Response\n");
-        if (PVMeter && MB.Address == PVMeterAddress && MB.Register == EMConfig[PVMeter].IRegister) {
+        if (PVMeter && MB->Address == PVMeterAddress && MB->Register == EMConfig[PVMeter].IRegister) {
             // packet from PV electric meter
-            receiveCurrentMeasurement(client, MB.Data, PVMeter, PV );
+            receiveCurrentMeasurement(client, PVMeter, PV );
         }    
     }
     // As this is a response to an earlier request, do not send response.
@@ -3032,18 +3034,19 @@ ModbusMessage MBPVMeterResponseRTU(ModbusMessage request) {
 //
 // Monitor Mains Meter responses, and update Irms values
 // Does not send any data back.
-ModbusMessage MBMainsMeterResponse(ModbusClient *client, ModbusMessage request) {
+ModbusMessage MBMainsMeterResponse(MBClientContainer *client, ModbusMessage request) {
     uint8_t x;
     ModbusMessage response;     // response message to be sent back
-    ModBus MB;
-    ModbusDecode(&MB, (uint8_t*)request.data(), request.size());
+    ModBus *MB = &(client->MB);
+
+    ModbusDecode(client, request);
 
     // process only Responses, as otherwise MB.Data is unitialized, and it will throw an exception
-    if (MB.Type == MODBUS_RESPONSE) {
-        if (MB.Register == EMConfig[MainsMeter].IRegister) {
+    if (MB->Type == MODBUS_RESPONSE) {
+        if (MB->Register == EMConfig[MainsMeter].IRegister) {
 
         //_LOG_A("Mains Meter Response\n");
-            x = receiveCurrentMeasurement(client, MB.Data, MainsMeter, CM);
+            x = receiveCurrentMeasurement(client, MainsMeter, CM);
             if (x && LoadBl <2) timeout = 10;                   // only reset timeout when data is ok, and Master/Disabled
 
             // Calculate Isum (for nodes and master)
@@ -3070,7 +3073,7 @@ ModbusMessage MBMainsMeterResponse(ModbusClient *client, ModbusMessage request) 
             }
         }
         else
-            StoreEnergyResponse(client, &MB, MainsMeter, Mains_import_active_energy, Mains_export_active_energy);
+            StoreEnergyResponse(client, MainsMeter, Mains_import_active_energy, Mains_export_active_energy);
     }
 
     // As this is a response to an earlier request, do not send response.
@@ -3093,39 +3096,39 @@ ModbusMessage MBNodeRequest(ModbusMessage request) {
     // Check if the call is for our current ServerID, or maybe for an old ServerID?
     if (LoadBl != request.getServerID()) return NIL_RESPONSE;
     
-    ModBus MB;
-    ModbusDecode(&MB, (uint8_t*)request.data(), request.size());
-    ItemID = mapModbusRegister2ItemID(MB.Register,MB.RegisterCount);
+    ModBus *MB = ModbusDecode(&MBclientRTU, request);
 
-    switch (MB.Function) {
+    ItemID = mapModbusRegister2ItemID(MB->Register,MB->RegisterCount);
+
+    switch (MB->Function) {
         case 0x03: // (Read holding register)
         case 0x04: // (Read input register)
             //     ReadItemValueResponse();
             if (ItemID) {
-                response.add(MB.Address, MB.Function, (uint8_t)(MB.RegisterCount * 2));
+                response.add(MB->Address, MB->Function, (uint8_t)(MB->RegisterCount * 2));
 
-                for (i = 0; i < MB.RegisterCount; i++) {
+                for (i = 0; i < MB->RegisterCount; i++) {
                     values[i] = getItemValue(ItemID + i);
                     response.add(values[i]);
                 }
                 //ModbusReadInputResponse(MB.Address, MB.Function, values, MB.RegisterCount);
             } else {
-                response.setError(MB.Address, MB.Function, ILLEGAL_DATA_ADDRESS);
+                response.setError(MB->Address, MB->Function, ILLEGAL_DATA_ADDRESS);
             }
             break;
         case 0x06: // (Write single register)
             //WriteItemValueResponse();
             if (ItemID) {
-                OK = setItemValue(ItemID, MB.Value);
+                OK = setItemValue(ItemID, MB->Value);
             }
 
             if (OK && ItemID < STATUS_STATE) write_settings();
 
-            if (MB.Address != BROADCAST_ADR || LoadBl == 0) {
+            if (MB->Address != BROADCAST_ADR || LoadBl == 0) {
                 if (!ItemID) {
-                    response.setError(MB.Address, MB.Function, ILLEGAL_DATA_ADDRESS);
+                    response.setError(MB->Address, MB->Function, ILLEGAL_DATA_ADDRESS);
                 } else if (!OK) {
-                    response.setError(MB.Address, MB.Function, ILLEGAL_DATA_VALUE);
+                    response.setError(MB->Address, MB->Function, ILLEGAL_DATA_VALUE);
                 } else {
                     return ECHO_RESPONSE;
                 }
@@ -3134,21 +3137,21 @@ ModbusMessage MBNodeRequest(ModbusMessage request) {
         case 0x10: // (Write multiple register))
             //      WriteMultipleItemValueResponse();
             if (ItemID) {
-                for (i = 0; i < MB.RegisterCount; i++) {
-                    value = (MB.Data[i * 2] <<8) | MB.Data[(i * 2) + 1];
+                for (i = 0; i < MB->RegisterCount; i++) {
+                    value = (MB->Data[i * 2] <<8) | MB->Data[(i * 2) + 1];
                     OK += setItemValue(ItemID + i, value);
                 }
             }
 
             if (OK && ItemID < STATUS_STATE) write_settings();
 
-            if (MB.Address != BROADCAST_ADR || LoadBl == 0) {
+            if (MB->Address != BROADCAST_ADR || LoadBl == 0) {
                 if (!ItemID) {
-                    response.setError(MB.Address, MB.Function, ILLEGAL_DATA_ADDRESS);
+                    response.setError(MB->Address, MB->Function, ILLEGAL_DATA_ADDRESS);
                 } else if (!OK) {
-                    response.setError(MB.Address, MB.Function, ILLEGAL_DATA_VALUE);
+                    response.setError(MB->Address, MB->Function, ILLEGAL_DATA_VALUE);
                 } else  {
-                    response.add(MB.Address, MB.Function, (uint16_t)MB.Register, (uint16_t)OK);
+                    response.add(MB->Address, MB->Function, (uint16_t)MB->Register, (uint16_t)OK);
                 }
             }
             break;
@@ -3165,28 +3168,27 @@ ModbusMessage MBbroadcast(ModbusMessage request) {
     uint8_t ItemID, i, OK = 0;
     uint16_t value;
 
-    ModBus MB;
-    ModbusDecode(&MB, (uint8_t*)request.data(), request.size());
-    ItemID = mapModbusRegister2ItemID(MB.Register, MB.RegisterCount);
+    ModBus *MB = ModbusDecode(&MBclientRTU, request);
+    ItemID = mapModbusRegister2ItemID(MB->Register, MB->RegisterCount);
 
-    if (MB.Type == MODBUS_REQUEST) {
+    if (MB->Type == MODBUS_REQUEST) {
 
         // Broadcast or addressed to this device
-        switch (MB.Function) {
+        switch (MB->Function) {
             // FC 03 and 04 are not possible with broadcast messages.
             case 0x06: // (Write single register)
                 //WriteItemValueResponse();
                 if (ItemID) {
-                    OK = setItemValue(ItemID, MB.Value);
+                    OK = setItemValue(ItemID, MB->Value);
                 }
 
                 if (OK && ItemID < STATUS_STATE) write_settings();
-                _LOG_V("Broadcast FC06 Item:%u val:%u\n",ItemID, MB.Value);
+                _LOG_V("Broadcast FC06 Item:%u val:%u\n",ItemID, MB->Value);
                 break;
             case 0x10: // (Write multiple register))
                 // 0x0020: Balance currents
-                if (MB.Register == 0x0020 && LoadBl > 1) {      // Message for Node(s)
-                    Balanced[0] = (MB.Data[(LoadBl - 1) * 2] <<8) | MB.Data[(LoadBl - 1) * 2 + 1];
+                if (MB->Register == 0x0020 && LoadBl > 1) {      // Message for Node(s)
+                    Balanced[0] = (MB->Data[(LoadBl - 1) * 2] <<8) | MB->Data[(LoadBl - 1) * 2 + 1];
                     if (Balanced[0] == 0 && State == STATE_C) setState(STATE_C1);               // tell EV to stop charging if charge current is zero
                     else if ((State == STATE_B) || (State == STATE_C)) SetCurrent(Balanced[0]); // Set charge current, and PWM output
                     _LOG_V("Broadcast received, Node %u.%1u A\n", Balanced[0]/10, Balanced[0]%10);
@@ -3194,8 +3196,8 @@ ModbusMessage MBbroadcast(ModbusMessage request) {
                 } else {
                     //WriteMultipleItemValueResponse();
                     if (ItemID) {
-                        for (i = 0; i < MB.RegisterCount; i++) {
-                            value = (MB.Data[i * 2] <<8) | MB.Data[(i * 2) + 1];
+                        for (i = 0; i < MB->RegisterCount; i++) {
+                            value = (MB->Data[i * 2] <<8) | MB->Data[(i * 2) + 1];
                             OK += setItemValue(ItemID + i, value);
                         }
                     }
@@ -3230,19 +3232,18 @@ void MBhandleDataRTU(ModbusMessage msg, uint32_t token)
         MBPVMeterResponse(&MBclientRTU, msg);
     // Only responses to FC 03/04 are handled here. FC 06/10 response is only a acknowledge.
     } else {
-        ModBus MB;
-        ModbusDecode(&MB, (uint8_t*)msg.data(), msg.size());
-        if (MB.Address > 1 && MB.Address <= NR_EVSES && (MB.Function == 03 || MB.Function == 04)) {
+        ModBus *MB = ModbusDecode(&MBclientRTU, msg);
+        if (MB->Address > 1 && MB->Address <= NR_EVSES && (MB->Function == 03 || MB->Function == 04)) {
         
             // Packet from Node EVSE
-            if (MB.Register == 0x0000) {
+            if (MB->Register == 0x0000) {
                 // Node status
             //    _LOG_A("Node Status received\n");
-                receiveNodeStatus(MB.Data, MB.Address - 1u);
-            }  else if (MB.Register == 0x0108) {
+                receiveNodeStatus(MB->Data, MB->Address - 1u);
+            }  else if (MB->Register == 0x0108) {
                 // Node EV meter settings
             //    _LOG_A("Node EV Meter settings received\n");
-                receiveNodeConfig(MB.Data, MB.Address - 1u);
+                receiveNodeConfig(MB->Data, MB->Address - 1u);
             }
         }
     }
@@ -3283,7 +3284,7 @@ void ConfigureModbusMode(uint8_t newmode) {
             
             _LOG_A("Setup MBserver/Node workers, end Master/Client\n");
             // Stop Master background task (if active)
-            if (newmode != 255 ) MBclientRTU.end();    
+            if (newmode != 255 ) MBclientRTUInt.end();    
             _LOG_A("ConfigureModbusMode1 task free ram: %u\n", uxTaskGetStackHighWaterMark( NULL ));
 
             // Register worker. at serverID 'LoadBl', all function codes
@@ -3313,23 +3314,23 @@ void ConfigureModbusMode(uint8_t newmode) {
             if (newmode != 255) MBserver.end();
             _LOG_A("ConfigureModbusMode2 task free ram: %u\n", uxTaskGetStackHighWaterMark( NULL ));
 
-            MBclientRTU.setTimeout(100);       // timeout 100ms
-            MBclientRTU.onDataHandler(&MBhandleDataRTU);
-            MBclientRTU.onErrorHandler(&MBhandleError);
+            MBclientRTUInt.setTimeout(100);       // timeout 100ms
+            MBclientRTUInt.onDataHandler(&MBhandleDataRTU);
+            MBclientRTUInt.onErrorHandler(&MBhandleError);
 
             // Start ModbusRTU Master background task
-            MBclientRTU.begin(Serial1);
+            MBclientRTUInt.begin(Serial1);
             // Modbus TCP bridge
             // Second address is the RTU slave address that is mapped to the first TCP slave address
             // TODO not sure if I should create a separate RTUclient for the bridge
             if (MainsMeter) {
-                MBbridge.attachServer(MainsMeterAddress, MainsMeterAddress, ANY_FUNCTION_CODE, &MBclientRTU);
+                MBbridge.attachServer(MainsMeterAddress, MainsMeterAddress, ANY_FUNCTION_CODE, &MBclientRTUInt);
             }
             if (EVMeter) {
-                MBbridge.attachServer(EVMeterAddress, EVMeterAddress, ANY_FUNCTION_CODE, &MBclientRTU);
+                MBbridge.attachServer(EVMeterAddress, EVMeterAddress, ANY_FUNCTION_CODE, &MBclientRTUInt);
             }
             if (PVMeter) {
-                MBbridge.attachServer(PVMeterAddress, PVMeterAddress, ANY_FUNCTION_CODE, &MBclientRTU);
+                MBbridge.attachServer(PVMeterAddress, PVMeterAddress, ANY_FUNCTION_CODE, &MBclientRTUInt);
             }
             // Port number 502, maximum of 5 clients in parallel, 10 seconds timeout
             MBbridge.start(502, 5, 10000);
@@ -4256,7 +4257,7 @@ void StartwebServer(void) {
             int address = request->getParam("bridge_meter_address")->value().toInt();
             doc["bridge_meter_address"] = "Value not allowed";                  //will be overwritten when success bridging
             if ( address >= 10 && address <= 249) {
-                MBbridge.attachServer(MainsMeterAddress, MainsMeterAddress, ANY_FUNCTION_CODE, &MBclientRTU);
+                MBbridge.attachServer(MainsMeterAddress, MainsMeterAddress, ANY_FUNCTION_CODE, &MBclientRTUInt);
                 doc["bridge_meter_address"] = address;
             }
             String json;

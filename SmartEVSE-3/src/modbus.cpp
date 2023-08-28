@@ -46,14 +46,18 @@ extern struct EMstruct EMConfig[EM_CUSTOM + 1];
  * @param uint16_t register
  * @param uint16_t data
  */
-void ModbusSend8(ModbusClient *client, uint8_t address, uint8_t function, uint16_t reg, uint16_t data) {
+void ModbusSend8(MBClientContainer *cl, uint8_t address, uint8_t function, uint16_t reg, uint16_t data) {
+    cl->MB.RequestAddress = address;
+    cl->MB.RequestFunction = function;
+    cl->MB.RequestRegister = reg;
+
     // 0x12345678 is a token to keep track of modbus requests/responses.
     // token: first byte address, second byte function, third and fourth reg
     uint32_t token;
     token = reg;
     token += address << 24;
     token += function << 16;
-    Error err = client->addRequest(token, address, function, reg, data);
+    Error err = cl->Client->addRequest(token, address, function, reg, data);
     if (err!=SUCCESS) {
       ModbusError e(err);
       _LOG_A("Error creating request: %02X - %s\n", (int)e, (const char *)e);
@@ -133,11 +137,8 @@ void combineBytes(void *var, uint8_t *buf, uint8_t pos, uint8_t endianness, MBDa
  * @param uint16_t register
  * @param uint16_t quantity
  */
-void ModbusReadInputRequest(ModbusClient *client, uint8_t address, uint8_t function, uint16_t reg, uint16_t quantity) {
-    // MB.RequestAddress = address;
-    // MB.RequestFunction = function;
-    // MB.RequestRegister = reg;
-    ModbusSend8(client, address, function, reg, quantity);
+void ModbusReadInputRequest(MBClientContainer *cl, uint8_t address, uint8_t function, uint16_t reg, uint16_t quantity) {
+    ModbusSend8(cl, address, function, reg, quantity);
 }
 
 
@@ -161,22 +162,20 @@ void ModbusReadInputResponse(uint8_t address, uint8_t function, uint16_t *values
  * @param uint16_t register
  * @param uint16_t value
  */
-void ModbusWriteSingleRequest(ModbusClient *client, uint8_t address, uint16_t reg, uint16_t value) {
-    // MB.RequestAddress = address;
-    // MB.RequestFunction = 0x06;
-    // MB.RequestRegister = reg;
-    ModbusSend8(client, address, Modbus::WRITE_HOLD_REGISTER, reg, value);  
+void ModbusWriteSingleRequest(MBClientContainer *cl, uint8_t address, uint16_t reg, uint16_t value) {
+    ModbusSend8(cl, address, Modbus::WRITE_HOLD_REGISTER, reg, value);  
 }
 
 /**
  * Request write multiple register (FC=16) to a device over modbus
  * 
+ * @param MBClientContainer pointer to MVClientContainer
  * @param uint8_t address
  * @param uint16_t register
  * @param uint8_t pointer to data
  * @param uint8_t count of data
  */
-void ModbusWriteMultipleRequest(ModbusClient *client, uint8_t address, uint16_t reg, uint16_t *values, uint8_t count) {
+void ModbusWriteMultipleRequest(MBClientContainer *cl, uint8_t address, uint16_t reg, uint16_t *values, uint8_t count) {
 
     // MB.RequestAddress = address;
     // MB.RequestFunction = 0x10;
@@ -187,7 +186,7 @@ void ModbusWriteMultipleRequest(ModbusClient *client, uint8_t address, uint16_t 
     token = reg;
     token += address << 24;
     token += Modbus::WRITE_MULT_REGISTERS << 16;
-    Error err = client->addRequest(token, address, Modbus::WRITE_MULT_REGISTERS, reg, (uint16_t) count, count * 2u, values);
+    Error err = cl->Client->addRequest(token, address, Modbus::WRITE_MULT_REGISTERS, reg, (uint16_t) count, count * 2u, values);
     if (err!=SUCCESS) {
       ModbusError e(err);
       _LOG_A("Error creating request: %02X - %s\n", (int)e, (const char *)e);
@@ -222,7 +221,11 @@ void ModbusException(uint8_t address, uint8_t function, uint8_t exception) {
  * @param uint8_t pointer to buffer
  * @param uint8_t length of buffer
  */
-void ModbusDecode(ModBus * MB, uint8_t * buf, uint8_t len) {
+ModBus * ModbusDecode(MBClientContainer *cl, ModbusMessage request) {
+    ModBus *MB = &(cl->MB);
+    uint8_t *buf = (uint8_t *)(request.data());
+    u_int8_t len = request.size();
+
     // Clear old values
     MB->Address = 0;
     MB->Function = 0;
@@ -375,6 +378,8 @@ void ModbusDecode(ModBus * MB, uint8_t * buf, uint8_t len) {
             _LOG_D(" Response\n");
             break;
     }
+
+    return MB;
 }
 
 
@@ -390,8 +395,8 @@ void ModbusDecode(ModBus * MB, uint8_t * buf, uint8_t len) {
  * @param uint16_t Register
  * @param uint8_t Count
  */
-void requestMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address, uint16_t Register, uint8_t Count) {
-    ModbusReadInputRequest(client, Address, EMConfig[Meter].Function, Register, (EMConfig[Meter].DataType == MB_DATATYPE_INT16 ? Count : (Count * 2u)));
+void requestMeasurement(MBClientContainer *cl, uint8_t Meter, uint8_t Address, uint16_t Register, uint8_t Count) {
+    ModbusReadInputRequest(cl, Address, EMConfig[Meter].Function, Register, (EMConfig[Meter].DataType == MB_DATATYPE_INT16 ? Count : (Count * 2u)));
 }
 
 /**
@@ -404,7 +409,7 @@ void requestMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address, ui
  * @param signed char Divisor
  * @return signed int Measurement
  */
-signed int receiveMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Count, uint8_t Endianness, MBDataType dataType, signed char Divisor) {
+signed int receiveMeasurement(u_int8_t *buf, uint8_t Count, uint8_t Endianness, MBDataType dataType, signed char Divisor) {
     float dCombined;
     signed int lCombined;
 
@@ -436,7 +441,7 @@ signed int receiveMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Count,
  * @param uint8_t Meter
  * @param uint8_t Address
  */
-void requestCurrentMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Address) {
+void requestCurrentMeasurement(MBClientContainer *client, uint8_t Meter, uint8_t Address) {
     switch(Meter) {
         case EM_API:
             break;
@@ -474,12 +479,13 @@ void requestCurrentMeasurement(ModbusClient *client, uint8_t Meter, uint8_t Addr
  * @param pointer to Current (mA)
  * @return uint8_t error
  */
-uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Meter, signed int *var) {
+uint8_t receiveCurrentMeasurement(MBClientContainer *client, uint8_t Meter, signed int *var) {
     uint8_t x, offset;
 
     // No CAL option in Menu
     CalActive = 0;
 
+    uint8_t *buf = client->MB.Data;
     switch(Meter) {
         case EM_API:
             break;
@@ -492,7 +498,7 @@ uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Me
             // offset 16 is Smart meter P1 current
             for (x = 0; x < 3; x++) {
                 // SmartEVSE works with Amps * 10
-                var[x] = receiveMeasurement(client, buf, offset + x, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].IDivisor - 3u);
+                var[x] = receiveMeasurement(buf, offset + x, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].IDivisor - 3u);
                 // When using CT's , adjust the measurements with calibration value
                 if (offset == 7) {
                     if (x == 0) Iuncal = abs((var[x] / 10));                    // Store uncalibrated CT1 measurement (10mA)
@@ -516,7 +522,6 @@ uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Me
         {
             // Need to handle the extra scaling factor
             int scalingFactor = -(int)receiveMeasurement(
-                        client, 
                         buf,
                         3,
                         EMConfig[Meter].Endianness,
@@ -526,7 +531,6 @@ uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Me
             // Now decode the three Current values using that scaling factor
             for (x = 0; x < 3; x++) {
                 var[x] = receiveMeasurement(
-                        client,
                         buf,
                         x,
                         EMConfig[Meter].Endianness,
@@ -539,7 +543,6 @@ uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Me
         default:
             for (x = 0; x < 3; x++) {
                 var[x] = receiveMeasurement(
-                        client,
                         buf,
                         x,
                         EMConfig[Meter].Endianness,
@@ -557,17 +560,17 @@ uint8_t receiveCurrentMeasurement(ModbusClient *client, uint8_t *buf, uint8_t Me
                                                                                 // when exporting current
         case EM_EASTRON3P:
             for (x = 0; x < 3; x++) {
-                if (receiveMeasurement(client, buf, x + 3u, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor) < 0) var[x] = -var[x];
+                if (receiveMeasurement( buf, x + 3u, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor) < 0) var[x] = -var[x];
             }
             break;
         case EM_EASTRON3P_INV:
             for (x = 0; x < 3; x++) {
-                if (receiveMeasurement(client, buf, x + 3u, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor) > 0) var[x] = -var[x];
+                if (receiveMeasurement( buf, x + 3u, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor) > 0) var[x] = -var[x];
             }
             break;
         case EM_ABB:
             for (x = 0; x < 3; x++) {
-                if (receiveMeasurement(client, buf, x + 5u, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor) < 0) var[x] = -var[x];
+                if (receiveMeasurement( buf, x + 5u, EMConfig[Meter].Endianness, EMConfig[Meter].DataType, EMConfig[Meter].PDivisor) < 0) var[x] = -var[x];
             }
             break;
     }
