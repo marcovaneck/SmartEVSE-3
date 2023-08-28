@@ -78,6 +78,7 @@ uint16_t MQTTPort;
 
 TaskHandle_t MqttTaskHandle = NULL;
 uint8_t lastMqttUpdate = 0;
+std::mutex pub_mtx;
 #endif
 
 ESPAsync_WiFiManager ESPAsync_wifiManager(&webServer, &dnsServer, APhostname.c_str());
@@ -1630,6 +1631,7 @@ void UpdateCurrentData(void) {
 
 #ifdef MQTT
     if (MQTTclient.connected()) {
+        std::lock_guard<std::mutex> lck(pub_mtx);
         if (MainsMeter) {
             MQTTclient.publish(MQTTprefix + "/MainsCurrentL1", String(Irms[0]), false, 0);
             MQTTclient.publish(MQTTprefix + "/MainsCurrentL2", String(Irms[1]), false, 0);
@@ -2369,6 +2371,8 @@ void SetupMQTTClient() {
     // Setup and connect MQTT client instance
     MQTTclient.setHost(MQTTHost.c_str(), MQTTPort);
 
+    MQTTclient.setWill(String(MQTTprefix + "/connected").c_str(), "offline", true, 0);
+
     if (MQTTuser != "" && MQTTpassword != "") {
         MQTTclient.connect(APhostname.c_str(), MQTTuser.c_str(), MQTTpassword.c_str());
     } else {
@@ -2384,6 +2388,8 @@ void SetupMQTTClient() {
 
         // Set up subscriptions
         MQTTclient.subscribe(String(MQTTprefix + "/Set/#"));
+
+        MQTTclient.publish(MQTTprefix+"/connected", "online", true, 0);
     }
 
     //publish MQTT discovery topics
@@ -2398,7 +2404,7 @@ void SetupMQTTClient() {
     //first all device stuff:
     const String device_payload = String(R"("device": {)") + jsn("model","SmartEVSE v3") + jsna("identifiers", MQTTprefix) + jsna("name", MQTTprefix) + jsna("manufacturer","Stegen") + jsna("configuration_url", "http://" + WiFi.localIP().toString().c_str()) + jsna("sw_version", String(VERSION)) + "}";
     //a device SmartEVSE-1001 consists of multiple entities, and an entity can be in the domains sensor, number, select etc.
-    String entity_suffix, entity_name, optional_payload, entity_domain;
+    String entity_suffix, entity_name, optional_payload;
 
     //some self-updating variables here:
 #define entity_id MQTTprefix + "-" + entity_suffix
@@ -2406,7 +2412,17 @@ void SetupMQTTClient() {
 #define entity_name(x) entity_name = x; entity_suffix = entity_name; entity_suffix.replace(" ", "");
 
     //create template to announce an entity in it's own domain:
-#define announce(x, entity_domain) entity_name(x); MQTTclient.publish("homeassistant/" + String(entity_domain) + "/" + entity_id + "/config",  "{" + jsn("name", entity_name) + jsna("object_id", entity_id) + jsna("unique_id", entity_id) + jsna("state_topic", entity_path) + "," + device_payload + optional_payload + "}", true, 0);
+#define announce(x, entity_domain) entity_name(x); \
+    MQTTclient.publish("homeassistant/" + String(entity_domain) + "/" + entity_id + "/config", \
+     "{" \
+        + jsn("name", entity_name) \
+        + jsna("object_id", entity_id) \
+        + jsna("unique_id", entity_id) \
+        + jsna("state_topic", entity_path) \
+        + jsna("availability_topic",String(MQTTprefix+"/connected")) \
+        + ", " + device_payload + optional_payload \
+        + "}", \
+    true, 0); // Retain + QoS 0
 
     //set the parameters for and announce sensors with device class 'current':
     optional_payload = jsna("device_class","current") + jsna("unit_of_measurement","A") + jsna("value_template", R"({{ value | int / 10 }})");
@@ -2503,6 +2519,7 @@ void mqttPublishData() {
     lastMqttUpdate = 0;
 
     if (MQTTclient.connected()) {
+        std::lock_guard<std::mutex> lck(pub_mtx);
         MQTTclient.publish(MQTTprefix + "/ESPUptime", String((esp_timer_get_time() / 1000000)), false, 0);
         MQTTclient.publish(MQTTprefix + "/ESPTemp", String(TempEVSE), false, 0);
         MQTTclient.publish(MQTTprefix + "/Mode", Access_bit == 0 ? "Off" : Mode > 3 ? "N/A" : StrMode[Mode], true, 0);
