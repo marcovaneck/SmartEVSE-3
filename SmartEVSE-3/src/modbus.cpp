@@ -176,10 +176,9 @@ void ModbusWriteSingleRequest(MBClientContainer *cl, uint8_t address, uint16_t r
  * @param uint8_t count of data
  */
 void ModbusWriteMultipleRequest(MBClientContainer *cl, uint8_t address, uint16_t reg, uint16_t *values, uint8_t count) {
-
-    // MB.RequestAddress = address;
-    // MB.RequestFunction = 0x10;
-    // MB.RequestRegister = reg;
+    cl->MB.RequestAddress = address;
+    cl->MB.RequestFunction = Modbus::WRITE_MULT_REGISTERS;
+    cl->MB.RequestRegister = reg;
     // 0x12345678 is a token to keep track of modbus requests/responses.
     // token: first byte address, second byte function, third and fourth reg
     uint32_t token;
