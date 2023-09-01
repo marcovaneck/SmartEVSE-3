@@ -236,6 +236,7 @@ ModBus * ModbusDecode(MBClientContainer *cl, ModbusMessage request) {
     MB->Exception = 0;
 
     _LOG_D("Received packet");
+    #if DBG
     char Str[128];
     char *cur = Str, * const end = Str + sizeof Str;
     for (uint8_t x=0; x<len; x++) {
@@ -243,7 +244,8 @@ ModBus * ModbusDecode(MBClientContainer *cl, ModbusMessage request) {
         else strcpy(end-sizeof("**truncated**"), "**truncated**");
     }
     _LOG_V(" (%i bytes) %s\n", len, Str);
-
+    #endif
+    
     // Modbus error packets length is 5 bytes
     if (len == 3) {
         MB->Type = MODBUS_EXCEPTION;
@@ -327,9 +329,9 @@ ModBus * ModbusDecode(MBClientContainer *cl, ModbusMessage request) {
         // MB.Data
         if (MB->Type && MB->DataLength) {
             // Set pointer to Data
-            MB->Data = buf;
+            // MB->Data = buf;
             // Modbus data is always at the end ahead the checksum
-            MB->Data = MB->Data + (len - MB->DataLength);
+            MB->Data = buf + (len - MB->DataLength);
         }
         
         // Request - Response check

@@ -78,7 +78,7 @@ uint16_t MQTTPort;
 
 TaskHandle_t MqttTaskHandle = NULL;
 uint8_t lastMqttUpdate = 0;
-std::mutex pub_mtx;
+// std::mutex pub_mtx;
 #endif
 
 ESPAsync_WiFiManager ESPAsync_wifiManager(&webServer, &dnsServer, APhostname.c_str());
@@ -1634,26 +1634,26 @@ void UpdateCurrentData(void) {
         Imeasured_EV = 0;
     }
 
-#ifdef MQTT
-    if (MQTTclient.connected()) {
-        std::lock_guard<std::mutex> lck(pub_mtx);
-        if (MainsMeter) {
-            MQTTclient.publish(MQTTprefix + "/MainsCurrentL1", String(Irms[0]), false, 0);
-            MQTTclient.publish(MQTTprefix + "/MainsCurrentL2", String(Irms[1]), false, 0);
-            MQTTclient.publish(MQTTprefix + "/MainsCurrentL3", String(Irms[2]), false, 0);
-        }
-        if (EVMeter) {
-            MQTTclient.publish(MQTTprefix + "/EVCurrentL1", String(Irms_EV[0]), false, 0);
-            MQTTclient.publish(MQTTprefix + "/EVCurrentL2", String(Irms_EV[1]), false, 0);
-            MQTTclient.publish(MQTTprefix + "/EVCurrentL3", String(Irms_EV[2]), false, 0);
-        }
-        if (PVMeter) {
-            MQTTclient.publish(MQTTprefix + "/PVCurrentL1", String(PV[0] > 100 ? (uint) PV[0] / 100 : 0), false, 0);
-            MQTTclient.publish(MQTTprefix + "/PVCurrentL2", String(PV[1] > 100 ? (uint) PV[1] / 100 : 0), false, 0);
-            MQTTclient.publish(MQTTprefix + "/PVCurrentL3", String(PV[2] > 100 ? (uint) PV[2] / 100 : 0), false, 0);
-        }
-    }
-#endif
+// #ifdef MQTT
+//     if (MQTTclient.connected()) {
+//         std::lock_guard<std::mutex> lck(pub_mtx);
+//         if (MainsMeter) {
+//             MQTTclient.publish(MQTTprefix + "/MainsCurrentL1", String(Irms[0]), false, 0);
+//             MQTTclient.publish(MQTTprefix + "/MainsCurrentL2", String(Irms[1]), false, 0);
+//             MQTTclient.publish(MQTTprefix + "/MainsCurrentL3", String(Irms[2]), false, 0);
+//         }
+//         if (EVMeter) {
+//             MQTTclient.publish(MQTTprefix + "/EVCurrentL1", String(Irms_EV[0]), false, 0);
+//             MQTTclient.publish(MQTTprefix + "/EVCurrentL2", String(Irms_EV[1]), false, 0);
+//             MQTTclient.publish(MQTTprefix + "/EVCurrentL3", String(Irms_EV[2]), false, 0);
+//         }
+//         if (PVMeter) {
+//             MQTTclient.publish(MQTTprefix + "/PVCurrentL1", String(PV[0] > 100 ? (uint) PV[0] / 100 : 0), false, 0);
+//             MQTTclient.publish(MQTTprefix + "/PVCurrentL2", String(PV[1] > 100 ? (uint) PV[1] / 100 : 0), false, 0);
+//             MQTTclient.publish(MQTTprefix + "/PVCurrentL3", String(PV[2] > 100 ? (uint) PV[2] / 100 : 0), false, 0);
+//         }
+//     }
+// #endif
     // Load Balancing mode: Smart/Master or Disabled
     // not needed for subpanel mode
     if (Mode && LoadBl < 2) {
@@ -2524,7 +2524,7 @@ void mqttPublishData() {
     lastMqttUpdate = 0;
 
     if (MQTTclient.connected()) {
-        std::lock_guard<std::mutex> lck(pub_mtx);
+        // std::lock_guard<std::mutex> lck(pub_mtx);
         MQTTclient.publish(MQTTprefix + "/ESPUptime", String((esp_timer_get_time() / 1000000)), false, 0);
         MQTTclient.publish(MQTTprefix + "/ESPTemp", String(TempEVSE), false, 0);
         MQTTclient.publish(MQTTprefix + "/Mode", Access_bit == 0 ? "Off" : Mode > 3 ? "N/A" : StrMode[Mode], true, 0);
@@ -2556,8 +2556,24 @@ void mqttPublishData() {
             MQTTclient.publish(MQTTprefix + "/EVEnergyCharged", String(EnergyCharged), true, 0);
             MQTTclient.publish(MQTTprefix + "/EVTotalEnergyCharged", String(EnergyEV), false, 0);
         }
-        if (homeBatteryLastUpdate)
+        if (homeBatteryLastUpdate) {
             MQTTclient.publish(MQTTprefix + "/HomeBatteryCurrent", String(homeBatteryCurrent), false, 0);
+        }
+        if (MainsMeter) {
+            MQTTclient.publish(MQTTprefix + "/MainsCurrentL1", String(Irms[0]), false, 0);
+            MQTTclient.publish(MQTTprefix + "/MainsCurrentL2", String(Irms[1]), false, 0);
+            MQTTclient.publish(MQTTprefix + "/MainsCurrentL3", String(Irms[2]), false, 0);
+        }
+        if (EVMeter) {
+            MQTTclient.publish(MQTTprefix + "/EVCurrentL1", String(Irms_EV[0]), false, 0);
+            MQTTclient.publish(MQTTprefix + "/EVCurrentL2", String(Irms_EV[1]), false, 0);
+            MQTTclient.publish(MQTTprefix + "/EVCurrentL3", String(Irms_EV[2]), false, 0);
+        }
+        if (PVMeter) {
+            MQTTclient.publish(MQTTprefix + "/PVCurrentL1", String(PV[0] > 100 ? (uint) PV[0] / 100 : 0), false, 0);
+            MQTTclient.publish(MQTTprefix + "/PVCurrentL2", String(PV[1] > 100 ? (uint) PV[1] / 100 : 0), false, 0);
+            MQTTclient.publish(MQTTprefix + "/PVCurrentL3", String(PV[2] > 100 ? (uint) PV[2] / 100 : 0), false, 0);
+        }
     } else {
         if (WiFi.status() == WL_CONNECTED) {
             // Setup MQTT client again so we can reconnect
@@ -2996,9 +3012,19 @@ ModbusMessage MBEVMeterResponse(MBClientContainer *client, ModbusMessage request
             x = receiveCurrentMeasurement(client, EVMeter, EV );
             if (x && LoadBl <2) timeout = 10;                   // only reset timeout when data is ok, and Master/Disabled
             for (x = 0; x < 3; x++) {
+        //         if ( EV[x] > 1000 ) {
+        //             std::lock_guard<std::mutex> lck(pub_mtx);
+        //             char Str[128];
+        //             snprintf(Str, 126, "EV %d measurement wrong %d %02x %02x %02x %02x %02x %02x",x,EV[x], client->MB.Data[0], client->MB.Data[1], client->MB.Data[2], client->MB.Data[3], client->MB.Data[4], client->MB.Data[5] );
+        // MQTTclient.publish(MQTTprefix + "/EVPlugState", Str, false, 0);
+        //             _LOG_W("%s\n",Str);
+
+        //         } else {
+
                 // CurrentMeter and PV values are MILLI AMPERE
                 Irms_EV[x] = (signed int)(EV[x] / 100);            // Convert to AMPERE * 10
             }
+            // }
         }
     }
     // As this is a response to an earlier request, do not send response.
@@ -3037,9 +3063,7 @@ ModbusMessage MBPVMeterResponseRTU(ModbusMessage request) {
 ModbusMessage MBMainsMeterResponse(MBClientContainer *client, ModbusMessage request) {
     uint8_t x;
     ModbusMessage response;     // response message to be sent back
-    ModBus *MB = &(client->MB);
-
-    ModbusDecode(client, request);
+    ModBus *MB = ModbusDecode(client, request);
 
     // process only Responses, as otherwise MB.Data is unitialized, and it will throw an exception
     if (MB->Type == MODBUS_RESPONSE) {
